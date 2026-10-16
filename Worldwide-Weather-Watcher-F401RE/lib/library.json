@@ -1,0 +1,9 @@
+{
+  "name": "cesi_grove",
+  "version": "1.0.0",
+  "description": "Mini-lib pedagogique Grove pour STM32 Nucleo F401RE (port depuis L476RG)",
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  }
+}
