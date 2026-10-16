@@ -5,10 +5,11 @@ void GroveButton_Init(void)
 {
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
+           __HAL_RCC_GPIOC_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
     gpio.Mode = GPIO_MODE_INPUT;
-    gpio.Pull = GPIO_PULLDOWN;
+    gpio.Pull = GPIO_PULLUP;
 
     gpio.Pin = BUTTON1_PIN;
     HAL_GPIO_Init(BUTTON1_PORT, &gpio);

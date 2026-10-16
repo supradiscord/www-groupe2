@@ -11,11 +11,9 @@
 #include "sd_logger.h"
 
 /*
- * PROGRAMME DE TEST MATERIEL (Nucleo F401RE)
- * Ouvre le Serial Monitor de PlatformIO a 115200 bauds.
- *  - Au demarrage : chaque module est initialise et on affiche OK / ERREUR
- *  - Toutes les 2 s : affichage RTC, BME680, luminosite, GPS
- *  - Bouton 1 (rouge) : LED RGB en rouge / Bouton 2 (vert) : LED RGB en vert
+ * Programme de test materiel - Nucleo F401RE
+ * Bouton vert (D8) -> LED verte / Bouton rouge (D9) -> LED rouge
+ * GPS sur le port D2
  */
 
 static void print_status(const char *name, bool ok)
@@ -31,7 +29,7 @@ int main(void)
     printf("\r\n=== WWW - test materiel F401RE ===\r\n");
 
     GroveRGB_Init();
-    GroveRGB_SetColor(0, 0, 255);          /* bleu = demarrage */
+    GroveRGB_SetColor(0, 0, 255);        /* bleu = demarrage */
 
     GroveButton_Init();
     GroveLight_Init();
@@ -45,15 +43,15 @@ int main(void)
     print_status("BME680", bme_ok);
     print_status("Carte SD", sd_ok);
 
-    GroveRGB_SetColor(0, 255, 0);          /* vert = pret */
+    GroveRGB_SetColor(0, 255, 0);        /* vert = pret */
 
     uint32_t last = 0;
 
     while (1)
     {
-        /* Boutons : reaction immediate */
-        if (GroveButton1_IsPressed())      GroveRGB_SetColor(255, 0, 0);
-        else if (GroveButton2_IsPressed()) GroveRGB_SetColor(0, 255, 0);
+        /* Button1 = D8 = bouton VERT, Button2 = D9 = bouton ROUGE */
+        if (GroveButton1_IsPressed())      GroveRGB_SetColor(0, 255, 0);
+        else if (GroveButton2_IsPressed()) GroveRGB_SetColor(255, 0, 0);
 
         if (HAL_GetTick() - last < 2000)
             continue;
@@ -80,11 +78,11 @@ int main(void)
                 printf("GPS       : %.5f, %.5f (%u sat)\r\n",
                        gps.latitude, gps.longitude, gps.satellites);
             else
-                printf("GPS       : pas de fix (va pres d'une fenetre)\r\n");
+                printf("GPS       : trames OK, pas encore de fix\r\n");
         }
         else
         {
-            printf("GPS       : aucune trame recue (verifie le port D2)\r\n");
+            printf("GPS       : aucune trame recue\r\n");
         }
     }
 }
