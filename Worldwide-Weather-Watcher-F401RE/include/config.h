@@ -10,6 +10,10 @@
  */
 #define DEMO_MODE 1
 
+/* Version du programme et numero de lot (commande VERSION) */
+#define FW_VERSION  "1.0.0"
+#define LOT_NUMBER  "WWW-G2-2026-001"
+
 /* Periode d'affichage en mode maintenance (consultation en direct) */
 #define MAINTENANCE_PERIOD_MS 5000U
 

@@ -10,11 +10,14 @@
 #include "modes.h"
 #include "gps_async.h"
 #include "acquisition.h"
+#include "storage.h"
+#include "console.h"
 
 /*
- * WORLDWIDE WEATHER WATCHER - Etape 2
- * Modes + boutons (interruptions) + LED d'etat + acquisition des capteurs.
- * Etape 3 : console de configuration / Etape 4 : ecriture carte SD.
+ * WORLDWIDE WEATHER WATCHER - Etape 3
+ * Modes + boutons (interruptions) + LED d'etat + acquisition des capteurs
+ * + console de configuration + parametres sauvegardes en flash.
+ * Etape 4 : ecriture carte SD.
  */
 
 int main(void)
@@ -25,8 +28,13 @@ int main(void)
     printf("\r\n=== Worldwide Weather Watcher ===\r\n");
 
     Params_SetDefaults();
-    printf("LOG_INTERVAL = %u min%s\r\n", g_params.log_interval_min,
-           DEMO_MODE ? " (mode demo)" : "");
+    if (Storage_Load())
+        printf("Parametres charges depuis la flash\r\n");
+    else
+        printf("Parametres par defaut%s\r\n", DEMO_MODE ? " (mode demo)" : "");
+    printf("LOG_INTERVAL = %u min\r\n", g_params.log_interval_min);
+
+    Console_Init();
 
     StatusLed_Init();
     Buttons_Init();
@@ -38,6 +46,8 @@ int main(void)
 
     /* Mode de demarrage : bouton rouge appuye -> configuration */
     Modes_Init(Buttons_IsRedPressed());
+    if (Modes_Get() == MODE_CONFIG)
+        printf("Tapez HELP pour la liste des commandes\r\n");
 
     uint32_t last_rtc_check = 0;
 
@@ -46,6 +56,7 @@ int main(void)
         Buttons_Update();
         Modes_Update();
         Acq_Update();
+        Console_Update();
 
         /* Verification de l'horloge RTC toutes les 2 s */
         if (HAL_GetTick() - last_rtc_check >= 2000)
