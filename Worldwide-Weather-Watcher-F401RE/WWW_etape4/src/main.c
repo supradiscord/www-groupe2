@@ -1,0 +1,84 @@
+#include <stdio.h>
+#include "stm32f4xx_hal.h"
+#include "setup.h"
+#include "grove_rtc_ds1307.h"
+#include "grove_light.h"
+#include "grove_gps_air530z.h"
+#include "config.h"
+#include "buttons.h"
+#include "status_led.h"
+#include "modes.h"
+#include "gps_async.h"
+#include "acquisition.h"
+#include "storage.h"
+#include "console.h"
+#include "logger.h"
+
+/*
+ * WORLDWIDE WEATHER WATCHER - Etape 4 (programme complet)
+ * Modes + boutons (interruptions) + LED d'etat + acquisition des capteurs
+ * + console de configuration + parametres sauvegardes en flash
+ * + enregistrement des mesures sur la carte SD (FatFs).
+ */
+
+int main(void)
+{
+    Global_Init();
+    HAL_Delay(100);
+
+    printf("\r\n=== Worldwide Weather Watcher ===\r\n");
+
+    Params_SetDefaults();
+    if (Storage_Load())
+        printf("Parametres charges depuis la flash\r\n");
+    else
+        printf("Parametres par defaut%s\r\n", DEMO_MODE ? " (mode demo)" : "");
+    printf("LOG_INTERVAL = %u min\r\n", g_params.log_interval_min);
+
+    Console_Init();
+
+    StatusLed_Init();
+    Buttons_Init();
+
+    GroveLight_Init();
+    GroveGPS_Init();
+    GpsAsync_Start();
+    Acq_Init();
+    Logger_Init();
+
+    /* Mode de demarrage : bouton rouge appuye -> configuration */
+    Modes_Init(Buttons_IsRedPressed());
+    if (Modes_Get() == MODE_CONFIG)
+        printf("Tapez HELP pour la liste des commandes\r\n");
+
+    uint32_t last_rtc_check = 0;
+
+    while (1)
+    {
+        Buttons_Update();
+        Modes_Update();
+        Acq_Update();
+        Console_Update();
+
+        /* Verification de l'horloge RTC toutes les 2 s */
+        if (HAL_GetTick() - last_rtc_check >= 2000)
+        {
+            last_rtc_check = HAL_GetTick();
+            RTC_DateTime dt;
+            bool rtc_ok = GroveRTC_Init() && GroveRTC_GetDateTime(&dt);
+
+            if (!rtc_ok && StatusLed_GetError() != ERR_RTC)
+            {
+                printf("ERREUR : horloge RTC inaccessible\r\n");
+                StatusLed_RaiseError(ERR_RTC);
+            }
+            else if (rtc_ok && StatusLed_GetError() == ERR_RTC)
+            {
+                printf("Horloge RTC de nouveau accessible\r\n");
+                StatusLed_ClearError(ERR_RTC);
+            }
+        }
+
+        StatusLed_Update();
+    }
+}
