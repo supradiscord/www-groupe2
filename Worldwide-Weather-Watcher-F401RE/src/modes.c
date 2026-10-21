@@ -15,7 +15,7 @@
  *  ECO         --rouge 5 s--> MAINTENANCE (memorise ECO)
  *  ECO         --vert 5 s---> STANDARD     (choix de conception, voir doc)
  *  MAINTENANCE --rouge 5 s--> mode precedent
- *  CONFIG      --30 min sans activite--> STANDARD
+ *  CONFIG      --30 min sans activite (commande ou appui)--> STANDARD
  */
 
 static SystemMode mode = MODE_STANDARD;
@@ -44,6 +44,7 @@ static void enter(SystemMode m)
 void Modes_Init(bool red_pressed_at_boot)
 {
     last_activity = HAL_GetTick();
+    Buttons_TakeActivity();
     enter(red_pressed_at_boot ? MODE_CONFIG : MODE_STANDARD);
 }
 
@@ -78,6 +79,7 @@ void Modes_Update(void)
             break;
 
         case MODE_CONFIG:
+            if (Buttons_TakeActivity()) last_activity = HAL_GetTick();  /* un appui = activite */
             if (HAL_GetTick() - last_activity >= CONFIG_TIMEOUT_MS)
             {
                 printf("Config : 30 min sans activite\r\n");

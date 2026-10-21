@@ -17,5 +17,6 @@ void Buttons_Update(void);          /* a appeler dans la boucle principale */
 ButtonEvent Buttons_GetEvent(void); /* renvoie (et consomme) le dernier evenement */
 bool Buttons_IsRedPressed(void);
 bool Buttons_IsGreenPressed(void);
+bool Buttons_TakeActivity(void);     /* vrai si un bouton a ete appuye depuis le dernier appel */
 
 #endif

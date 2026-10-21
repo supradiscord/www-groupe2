@@ -27,6 +27,7 @@ static Button green = { BUTTON1_PORT, BUTTON1_PIN, false, 0, 0, false };
 static Button red   = { BUTTON2_PORT, BUTTON2_PIN, false, 0, 0, false };
 
 static volatile ButtonEvent pending_event = BTN_EVT_NONE;
+static volatile bool activity = false;
 
 static bool read_pressed(const Button *b)
 {
@@ -76,6 +77,7 @@ static void on_edge(Button *b)
     {
         b->press_tick = now;     /* debut de l'appui */
         b->long_fired = false;
+        activity = true;
     }
     b->pressed = p;
 }
@@ -112,3 +114,10 @@ ButtonEvent Buttons_GetEvent(void)
 
 bool Buttons_IsRedPressed(void)   { return read_pressed(&red); }
 bool Buttons_IsGreenPressed(void) { return read_pressed(&green); }
+
+bool Buttons_TakeActivity(void)
+{
+    bool a = activity;
+    activity = false;
+    return a;
+}

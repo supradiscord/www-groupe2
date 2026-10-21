@@ -19,8 +19,8 @@ static const Color ORANGE = {255,  60,   0};
 static const Color BLUE   = {  0,   0, 255};
 static const Color WHITE  = {255, 255, 255};
 
-static SystemMode  cur_mode = MODE_STANDARD;
-static SystemError cur_err  = ERR_NONE;
+static SystemMode cur_mode = MODE_STANDARD;
+static uint8_t    err_flags = 0;   /* un bit par erreur active */
 static Color shown = {1, 2, 3};   /* valeur impossible : force le 1er envoi */
 
 static void show(Color c)
@@ -47,12 +47,21 @@ void StatusLed_Init(void)
     GroveRGB_Init();
 }
 
-void StatusLed_SetMode(SystemMode mode) { cur_mode = mode; }
-void StatusLed_SetError(SystemError err) { cur_err = err; }
-SystemError StatusLed_GetError(void)     { return cur_err; }
+void StatusLed_SetMode(SystemMode mode)    { cur_mode = mode; }
+void StatusLed_RaiseError(SystemError err) { if (err != ERR_NONE) err_flags |= (uint8_t)(1U << err); }
+void StatusLed_ClearError(SystemError err) { if (err != ERR_NONE) err_flags &= (uint8_t)~(1U << err); }
+
+/* Plusieurs erreurs a la fois : on affiche la plus prioritaire (ERR_RTC en tete) */
+SystemError StatusLed_GetError(void)
+{
+    for (int e = ERR_RTC; e > ERR_NONE; e--)
+        if (err_flags & (1U << e)) return (SystemError)e;
+    return ERR_NONE;
+}
 
 void StatusLed_Update(void)
 {
+    SystemError cur_err = StatusLed_GetError();
     if (cur_err == ERR_NONE)
     {
         show(mode_color(cur_mode));

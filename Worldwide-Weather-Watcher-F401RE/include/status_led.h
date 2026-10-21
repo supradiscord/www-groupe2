@@ -5,8 +5,9 @@
 
 void StatusLed_Init(void);
 void StatusLed_SetMode(SystemMode mode);
-void StatusLed_SetError(SystemError err);   /* ERR_NONE pour effacer */
-SystemError StatusLed_GetError(void);
-void StatusLed_Update(void);                /* a appeler dans la boucle principale */
+void StatusLed_RaiseError(SystemError err);   /* active une erreur          */
+void StatusLed_ClearError(SystemError err);   /* desactive une erreur       */
+SystemError StatusLed_GetError(void);         /* erreur affichee (prioritaire) */
+void StatusLed_Update(void);                  /* a appeler dans la boucle   */
 
 #endif
