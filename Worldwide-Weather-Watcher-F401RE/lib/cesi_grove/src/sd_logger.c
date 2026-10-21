@@ -2,6 +2,16 @@
 #include "board_pins.h"
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
+#include <string.h>
+#include "ff.h"
+
+/* 1 = affiche les messages de diagnostic [SD diag], 0 = silencieux */
+#define SD_DIAG 0
+#if SD_DIAG
+#define SD_DIAG_PRINTF printf
+#else
+#define SD_DIAG_PRINTF(...) ((void)0)
+#endif
 
 #define SD_CMD0     0
 #define SD_CMD1     1
@@ -66,6 +76,14 @@ static void SD_SetActiveChipSelect(uint8_t index)
     {
         HAL_GPIO_WritePin(g_cs_candidates[i].port, g_cs_candidates[i].pin, GPIO_PIN_SET);
     }
+}
+
+/* Vitesse SPI : lente (~62 kHz) pour l'initialisation, rapide (1 MHz) ensuite */
+static void SD_SetSpeed(uint32_t prescaler)
+{
+    SD_SPI_HANDLE.Instance->CR1 &= ~SPI_CR1_SPE;
+    SD_SPI_HANDLE.Instance->CR1 = (SD_SPI_HANDLE.Instance->CR1 & ~SPI_CR1_BR) | prescaler;
+    SD_SPI_HANDLE.Instance->CR1 |= SPI_CR1_SPE;
 }
 
 static bool SD_WaitReady(uint32_t timeout_ms)
@@ -137,16 +155,19 @@ bool SDLogger_Init(void)
     uint8_t idle_samples[8];
     uint8_t cmd0_samples[8];
     uint8_t sample_count;
+    (void)idle_samples;
+    (void)cmd0_samples;
 
     g_card_type = SDLOGGER_CARD_UNKNOWN;
     g_init_status = SDLOGGER_INIT_ERR_CMD0;
+    SD_SetSpeed(SPI_BAUDRATEPRESCALER_256);
 
     for (cs_index = 0; cs_index < SD_CS_CANDIDATE_COUNT; ++cs_index)
     {
         SD_SetActiveChipSelect(cs_index);
         SD_Deselect();
 
-        printf("[SD diag] try CS %s\r\n", g_cs_candidates[cs_index].label);
+        SD_DIAG_PRINTF("[SD diag] try CS %s\r\n", g_cs_candidates[cs_index].label);
 
         HAL_Delay(SD_POWERUP_DELAY_MS);
 
@@ -160,7 +181,7 @@ bool SDLogger_Init(void)
         {
             idle_samples[i] = SD_SPI_Transfer(0xFF);
         }
-        printf("[SD diag] MISO idle bytes: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+        SD_DIAG_PRINTF("[SD diag] MISO idle bytes: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
                idle_samples[0], idle_samples[1], idle_samples[2], idle_samples[3],
                idle_samples[4], idle_samples[5], idle_samples[6], idle_samples[7]);
 
@@ -187,18 +208,18 @@ bool SDLogger_Init(void)
 
         if (sample_count > 0U)
         {
-            printf("[SD diag] CMD0 R1 first bytes:");
+            SD_DIAG_PRINTF("[SD diag] CMD0 R1 first bytes:");
             for (i = 0; i < sample_count; ++i)
             {
-                printf(" %02X", cmd0_samples[i]);
+                SD_DIAG_PRINTF(" %02X", cmd0_samples[i]);
             }
-            printf("\r\n");
+            SD_DIAG_PRINTF("\r\n");
         }
 
         if (r1 != SD_R1_IDLE_STATE)
         {
             g_init_status = SDLOGGER_INIT_ERR_CMD0;
-            printf("[SD diag] CMD0 failed on %s\r\n", g_cs_candidates[cs_index].label);
+            SD_DIAG_PRINTF("[SD diag] CMD0 failed on %s\r\n", g_cs_candidates[cs_index].label);
             continue;
         }
 
@@ -259,6 +280,7 @@ bool SDLogger_Init(void)
 
             g_card_type = ((ocr[0] & 0x40U) != 0U) ? SDLOGGER_CARD_SDHC : SDLOGGER_CARD_SDSC;
             g_init_status = SDLOGGER_INIT_OK;
+            SD_SetSpeed(SPI_BAUDRATEPRESCALER_16);
             return true;
         }
 
@@ -280,6 +302,7 @@ bool SDLogger_Init(void)
             {
                 g_card_type = SDLOGGER_CARD_SDSC;
                 g_init_status = SDLOGGER_INIT_OK;
+                SD_SetSpeed(SPI_BAUDRATEPRESCALER_16);
                 return true;
             }
         }
@@ -306,151 +329,175 @@ const char *SDLogger_GetActiveCsLabel(void)
     return g_cs_candidates[g_active_cs_index].label;
 }
 
-/* ---------- bit-bang diagnostic ----------------------------------------- */
+/* ---------- lecture / ecriture de blocs de 512 octets (pour FatFs) ---------- */
 
-static void SD_ReconfigPinsGPIO(void)
+static uint32_t SD_BlockAddress(uint32_t sector)
 {
-    GPIO_InitTypeDef gpio = {0};
-
-    /* Disable SPI1 peripheral while we take over the pins */
-    SD_SPI_HANDLE.Instance->CR1 &= ~SPI_CR1_SPE;
-
-    /* PA5 = SCK, PA7 = MOSI: push-pull outputs */
-    gpio.Pin   = GPIO_PIN_5 | GPIO_PIN_7;
-    gpio.Mode  = GPIO_MODE_OUTPUT_PP;
-    gpio.Pull  = GPIO_NOPULL;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &gpio);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* SCK idle low  */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_SET);   /* MOSI idle high */
-
-    /* PA6 = MISO: input with pull-up */
-    gpio.Pin  = GPIO_PIN_6;
-    gpio.Mode = GPIO_MODE_INPUT;
-    gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOA, &gpio);
+    /* SDHC : adresse en blocs ; SDSC : adresse en octets */
+    return (g_card_type == SDLOGGER_CARD_SDHC) ? sector : sector * 512U;
 }
 
-static void SD_ReconfigPinsSPI(void)
+bool SDLogger_ReadBlock(uint32_t sector, uint8_t *buffer)
 {
-    GPIO_InitTypeDef gpio = {0};
+    if (SD_SendCommand(17, SD_BlockAddress(sector), 0x01U) != 0x00U)   /* CMD17 */
+    {
+        SD_Deselect();
+        return false;
+    }
 
-    gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_7;
-    gpio.Mode      = GPIO_MODE_AF_PP;
-    gpio.Pull      = GPIO_NOPULL;
-    gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
-    gpio.Alternate = GPIO_AF5_SPI1;
-    HAL_GPIO_Init(GPIOA, &gpio);
+    uint8_t token;
+    uint32_t start = HAL_GetTick();
+    do
+    {
+        token = SD_SPI_Transfer(0xFF);
+    }
+    while (token == 0xFFU && (HAL_GetTick() - start) < 200U);
 
-    gpio.Pin  = GPIO_PIN_6;
-    gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOA, &gpio);
+    if (token != 0xFEU)            /* jeton de debut de donnees */
+    {
+        SD_Deselect();
+        return false;
+    }
 
-    SD_SPI_HANDLE.Instance->CR1 |= SPI_CR1_SPE;
+    for (uint32_t i = 0; i < 512U; i++)
+        buffer[i] = SD_SPI_Transfer(0xFF);
+
+    (void)SD_SPI_Transfer(0xFF);   /* CRC ignore */
+    (void)SD_SPI_Transfer(0xFF);
+    SD_Deselect();
+    return true;
 }
 
-static uint8_t SD_BitBangByte(uint8_t tx)
+bool SDLogger_WriteBlock(uint32_t sector, const uint8_t *buffer)
 {
-    uint8_t rx = 0;
-    uint8_t bit;
-
-    for (bit = 0; bit < 8U; ++bit)
+    if (SD_SendCommand(24, SD_BlockAddress(sector), 0x01U) != 0x00U)   /* CMD24 */
     {
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7,
-                          (tx & 0x80U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        tx <<= 1;
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);   /* rising edge  */
-        rx <<= 1;
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET)
-        {
-            rx |= 1U;
-        }
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* falling edge */
+        SD_Deselect();
+        return false;
     }
 
-    return rx;
+    (void)SD_SPI_Transfer(0xFF);
+    (void)SD_SPI_Transfer(0xFE);   /* jeton de debut de donnees */
+
+    for (uint32_t i = 0; i < 512U; i++)
+        (void)SD_SPI_Transfer(buffer[i]);
+
+    (void)SD_SPI_Transfer(0xFF);   /* CRC factice */
+    (void)SD_SPI_Transfer(0xFF);
+
+    uint8_t resp = SD_SPI_Transfer(0xFF);
+    if ((resp & 0x1FU) != 0x05U)   /* donnees refusees par la carte */
+    {
+        SD_Deselect();
+        return false;
+    }
+
+    bool ok = SD_WaitReady(500U);  /* la carte ecrit en interne */
+    SD_Deselect();
+    return ok;
 }
 
-bool SDLogger_BitBangCMD0Test(void)
+/* ---------- fichiers (FatFs) ---------- */
+
+extern void SD_DiskInvalidate(void);   /* diskio.c */
+
+static FATFS g_fs;
+static bool g_mounted = false;
+static SDLoggerWriteError g_last_error = SDLOGGER_WRITE_OK;
+
+static void SD_Drop(void)
 {
-    uint8_t i;
-    uint8_t r1 = 0xFFU;
-    GPIO_PinState cs_rb;
+    f_mount(0, "", 0);
+    g_mounted = false;
+    SD_DiskInvalidate();
+}
 
-    SD_ReconfigPinsGPIO();
-
-    /* --- GPIO self-test: verify CS output and MISO input are accessible --- */
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
-    cs_rb = HAL_GPIO_ReadPin(SD_CS_PORT, SD_CS_PIN);
-    printf("[SD bitbang] CS readback HIGH: %d (expected 1)\r\n", cs_rb);
-
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_RESET);
-    cs_rb = HAL_GPIO_ReadPin(SD_CS_PORT, SD_CS_PIN);
-    printf("[SD bitbang] CS readback LOW:  %d (expected 0)\r\n", cs_rb);
-
-    /* Raw IDR dump: GPIOA bits 5(SCK) 6(MISO) 7(MOSI), GPIOB bit 5(CS) */
+bool SDLogger_Mount(void)
+{
+    if (g_mounted) return true;
+    SD_DiskInvalidate();                 /* force une nouvelle initialisation de la carte */
+    FRESULT fr = f_mount(&g_fs, "", 1);
+    if (fr != FR_OK)
     {
-        uint32_t idr_a = GPIOA->IDR;
-        uint32_t idr_b = GPIOB->IDR;
-        printf("[SD bitbang] GPIOA IDR: SCK(5)=%lu MISO(6)=%lu MOSI(7)=%lu\r\n",
-               (idr_a >> 5U) & 1U, (idr_a >> 6U) & 1U, (idr_a >> 7U) & 1U);
-        printf("[SD bitbang] GPIOB IDR: CS(5)=%lu\r\n", (idr_b >> 5U) & 1U);
+        printf("[SD]   f_mount erreur %d\r\n", (int)fr);
+        f_mount(0, "", 0);
+        return false;
     }
+    g_mounted = true;
+    return true;
+}
 
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
-    HAL_Delay(10U);
+void SDLogger_Unmount(void)
+{
+    if (g_mounted) SD_Drop();
+}
 
-    /* --- 80 init clocks with CS high --- */
-    for (i = 0; i < 10U; ++i)
-    {
-        (void)SD_BitBangByte(0xFFU);
-    }
-
-    /* MISO state just before CMD0 */
-    printf("[SD bitbang] MISO before CMD0: %d\r\n",
-           HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6));
-
-    /* CS low, send CMD0 */
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_RESET);
-    (void)SD_BitBangByte(0x40U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x00U);
-    (void)SD_BitBangByte(0x95U);
-
-    printf("[SD bitbang] CMD0 responses:");
-    for (i = 0; i < 10U; ++i)
-    {
-        r1 = SD_BitBangByte(0xFFU);
-        printf(" %02X", r1);
-        if ((r1 & 0x80U) == 0U)
-        {
-            break;
-        }
-    }
-    printf("\r\n");
-
-    HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
-    (void)SD_BitBangByte(0xFFU);
-
-    SD_ReconfigPinsSPI();
-
-    if (r1 == 0x01U)
-    {
-        printf("[SD bitbang] CMD0 OK -> SPI hardware config issue\r\n");
-        return true;
-    }
-
-    printf("[SD bitbang] CMD0 still failed -> physical wiring/shield issue\r\n");
-    return false;
+bool SDLogger_IsMounted(void)
+{
+    return g_mounted;
 }
 
 bool SDLogger_WriteLine(const char *filename, const char *line)
 {
-    (void)filename;
-    (void)line;
+    g_last_error = SDLOGGER_WRITE_OK;
 
-    /* File write support needs FatFs + diskio SPI. */
-    return false;
+    if (!SDLogger_Mount())
+    {
+        g_last_error = SDLOGGER_WRITE_ERR_ACCESS;
+        return false;
+    }
+
+    FIL f;
+    if (f_open(&f, filename, FA_OPEN_APPEND | FA_WRITE) != FR_OK)
+    {
+        g_last_error = SDLOGGER_WRITE_ERR_ACCESS;
+        SD_Drop();
+        return false;
+    }
+
+    UINT bw1 = 0, bw2 = 0;
+    UINT len = (UINT)strlen(line);
+    FRESULT r1 = f_write(&f, line, len, &bw1);
+    FRESULT r2 = (r1 == FR_OK) ? f_write(&f, "\r\n", 2, &bw2) : r1;
+    FRESULT rc = f_close(&f);
+
+    if (r1 != FR_OK || r2 != FR_OK || rc != FR_OK)
+    {
+        g_last_error = SDLOGGER_WRITE_ERR_ACCESS;
+        SD_Drop();
+        return false;
+    }
+    if (bw1 != len || bw2 != 2U)        /* ecriture incomplete = carte pleine */
+    {
+        g_last_error = SDLOGGER_WRITE_ERR_FULL;
+        return false;
+    }
+    return true;
+}
+
+SDLoggerWriteError SDLogger_GetLastWriteError(void)
+{
+    return g_last_error;
+}
+
+bool SDLogger_GetFileSize(const char *filename, uint32_t *size)
+{
+    FILINFO fi;
+    if (!SDLogger_Mount()) return false;
+    if (f_stat(filename, &fi) != FR_OK) return false;
+    *size = (uint32_t)fi.fsize;
+    return true;
+}
+
+bool SDLogger_FileExists(const char *filename)
+{
+    FILINFO fi;
+    if (!SDLogger_Mount()) return false;
+    return f_stat(filename, &fi) == FR_OK;
+}
+
+bool SDLogger_Rename(const char *from, const char *to)
+{
+    if (!SDLogger_Mount()) return false;
+    return f_rename(from, to) == FR_OK;
 }

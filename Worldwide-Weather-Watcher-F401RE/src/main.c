@@ -12,12 +12,13 @@
 #include "acquisition.h"
 #include "storage.h"
 #include "console.h"
+#include "logger.h"
 
 /*
- * WORLDWIDE WEATHER WATCHER - Etape 3
+ * WORLDWIDE WEATHER WATCHER - Etape 4 (programme complet)
  * Modes + boutons (interruptions) + LED d'etat + acquisition des capteurs
- * + console de configuration + parametres sauvegardes en flash.
- * Etape 4 : ecriture carte SD.
+ * + console de configuration + parametres sauvegardes en flash
+ * + enregistrement des mesures sur la carte SD (FatFs).
  */
 
 int main(void)
@@ -43,6 +44,7 @@ int main(void)
     GroveGPS_Init();
     GpsAsync_Start();
     Acq_Init();
+    Logger_Init();
 
     /* Mode de demarrage : bouton rouge appuye -> configuration */
     Modes_Init(Buttons_IsRedPressed());

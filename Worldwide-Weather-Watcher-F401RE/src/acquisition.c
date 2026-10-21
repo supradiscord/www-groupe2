@@ -6,6 +6,8 @@
 #include "bme280.h"
 #include "grove_light.h"
 #include "grove_rtc_ds1307.h"
+#include "sd_logger.h"
+#include "logger.h"
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
 #include <string.h>
@@ -122,9 +124,15 @@ static void finish(SystemMode m)
              f_date, f_temp, f_hum, f_pres, f_lum, f_gps);
 
     if (m == MODE_MAINTENANCE)
-        printf("[LIVE] %s\r\n", line);
+    {
+        printf("[LIVE] %s\r\n", line);          /* maintenance : pas d'ecriture SD */
+    }
     else
-        printf("[LOG]  %s\r\n", line);   /* etape 4 : ecriture sur la carte SD */
+    {
+        printf("[LOG]  %s\r\n", line);
+        if (Logger_Write(f_date, line))
+            printf("[SD]   ligne enregistree\r\n");
+    }
 
     uint32_t now = HAL_GetTick();
     uint32_t due = start_tick + period_ms(m);
@@ -153,6 +161,16 @@ void Acq_Update(void)
     /* Changement de mode : on repart de zero, mesure immediate */
     if (m != last_mode)
     {
+        /* Maintenance : la carte SD est demontee, on peut la retirer sans risque */
+        if (m == MODE_MAINTENANCE)
+        {
+            SDLogger_Unmount();
+            printf("Carte SD demontee : retrait possible en toute securite\r\n");
+        }
+        else if (last_mode == MODE_MAINTENANCE)
+        {
+            printf("Carte SD : reprise de l'enregistrement\r\n");
+        }
         last_mode = m;
         state = ACQ_IDLE;
         next_due = now;

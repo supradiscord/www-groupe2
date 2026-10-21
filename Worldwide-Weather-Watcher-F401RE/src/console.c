@@ -242,6 +242,7 @@ void Console_Update(void)
             if (len > 0)
             {
                 line[len] = '\0';
+                printf("\r\n");          /* la reponse commence sur une nouvelle ligne */
                 process(line);
                 len = 0;
             }
